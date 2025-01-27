@@ -1,0 +1,780 @@
+import React, { useState, useEffect, useRef } from '@blocklet/pages-kit/builtin/react';
+import { Box } from '@blocklet/pages-kit/builtin/mui/material';
+
+/**
+ * OPTIONAL: If you need to parse a Google Fonts URL that includes italics and weight,
+ * keep this. If not, you can remove it.
+ */
+function parseGoogleFontUrl(subtitleFontUrl) {
+  try {
+    const urlObj = new URL(subtitleFontUrl);
+    const familyParam = urlObj.searchParams.get('family');
+    if (!familyParam) {
+      return { family: '', fontStyle: 'normal', fontWeight: 'normal' };
+    }
+
+    const familyNameAndParams = familyParam.split(':');
+    const rawFamilyName = familyNameAndParams[0].replace(/\+/g, ' ');
+    let fontStyle = 'normal';
+    let fontWeight = 'normal';
+
+    if (familyNameAndParams[1]) {
+      const [styles, values] = familyNameAndParams[1].split('@');
+      if (styles && values) {
+        const stylesArr = styles.split(',');
+        const valsArr = values.split(',');
+
+        const italIndex = stylesArr.indexOf('ital');
+        if (italIndex !== -1 && valsArr[italIndex] === '1') {
+          fontStyle = 'italic';
+        }
+
+        const wghtIndex = stylesArr.indexOf('wght');
+        if (wghtIndex !== -1 && valsArr[wghtIndex]) {
+          fontWeight = valsArr[wghtIndex];
+        }
+      }
+    }
+
+    return { family: rawFamilyName, fontStyle, fontWeight };
+  } catch (err) {
+    console.warn('Invalid subtitleFontUrl:', subtitleFontUrl, err);
+    return { family: '', fontStyle: 'normal', fontWeight: 'normal' };
+  }
+}
+
+function execCommand(command, savedSelectionRef, value = null) {
+  const sel = window.getSelection();
+  if (savedSelectionRef.current && sel) {
+    sel.removeAllRanges();
+    sel.addRange(savedSelectionRef.current);
+  }
+  document.execCommand(command, false, value);
+}
+
+export default function VideoHeroSection({
+  className,
+  STYLES = 'Standard', // 'Fixed' or 'Standard'
+  editingState = false,
+  initialTitle = 'YOU MADE IT HERE. NOW...',
+  initialSubtitle = '#JustHODL',
+  initialDescription = "Crafting a premium & curated selection of crypto tools and services. Don't miss out!",
+  initialButtonText = 'Shop now',
+  buttonLink = '#',
+  videoSrc,
+  textColor = '#FFFFFF',
+  buttonBackgroundColor = '#FFFFFF',
+  buttonTextColor = '#000000',
+  subtitleFontUrl,
+  storageKey = 'videoHeroData' // Key for localStorage
+}) {
+  // Editable states (store HTML for all, so partial formatting is preserved)
+  const [title, setTitle] = useState(initialTitle);
+  const [subtitle, setSubtitle] = useState(initialSubtitle);
+  const [description, setDescription] = useState(initialDescription);
+  const [buttonText, setButtonText] = useState(initialButtonText);
+
+  // Right-click menu states
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const [showMenu, setShowMenu] = useState(false);
+
+  // Submenu
+  const [subMenuPosition, setSubMenuPosition] = useState({ x: 220, y: 0 });
+  const subMenuRef = useRef(null);
+
+  // Link pop-up
+  const [showLinkInput, setShowLinkInput] = useState(false);
+  const [linkInputValue, setLinkInputValue] = useState('');
+  const [isEditingLink, setIsEditingLink] = useState(false);
+
+  // For saving/restoring text selection
+  const savedSelectionRef = useRef(null);
+
+  // Refs to editable fields
+  const editableRefs = {
+    title: useRef(null),
+    subtitle: useRef(null),
+    description: useRef(null),
+    buttonText: useRef(null),
+  };
+
+  // 3-second close timer reference (which is actually 300ms)
+  const closeTimerRef = useRef(null);
+
+  // Booleans to track if user’s mouse is in the menu or the link popup
+  const [isHoveringMenu, setIsHoveringMenu] = useState(false);
+  const [isHoveringPopup, setIsHoveringPopup] = useState(false);
+
+  // Determine final video URL
+  const videoUrl =
+    typeof videoSrc === 'object' && videoSrc !== null && 'url' in videoSrc
+      ? videoSrc.url
+      : videoSrc;
+
+  // Parse Google Fonts URL
+  const { family, fontStyle, fontWeight } = parseGoogleFontUrl(subtitleFontUrl || '');
+
+  /**
+   * Dynamically load the Google Fonts link (if needed)
+   */
+  useEffect(() => {
+    if (subtitleFontUrl) {
+      const link = document.createElement('link');
+      link.href = subtitleFontUrl;
+      link.rel = 'stylesheet';
+      document.head.appendChild(link);
+    }
+  }, [subtitleFontUrl]);
+
+  /**
+   * Load data from localStorage
+   */
+  useEffect(() => {
+    const savedData = JSON.parse(localStorage.getItem(storageKey));
+    if (savedData) {
+      setTitle(savedData.title || initialTitle);
+      setSubtitle(savedData.subtitle || initialSubtitle);
+      setDescription(savedData.description || initialDescription);
+      setButtonText(savedData.buttonText || initialButtonText);
+    }
+  }, [storageKey, initialTitle, initialSubtitle, initialDescription, initialButtonText]);
+
+  /**
+   * Save data to localStorage once editing is done
+   */
+  useEffect(() => {
+    if (!editingState) {
+      if (editableRefs.title.current) {
+        setTitle(editableRefs.title.current.innerHTML);
+      }
+      if (editableRefs.subtitle.current) {
+        setSubtitle(editableRefs.subtitle.current.innerHTML);
+      }
+      if (editableRefs.description.current) {
+        setDescription(editableRefs.description.current.innerHTML);
+      }
+      if (editableRefs.buttonText.current) {
+        setButtonText(editableRefs.buttonText.current.innerHTML);
+      }
+
+      const payload = {
+        title,
+        subtitle,
+        description,
+        buttonText,
+      };
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+      console.log('Content saved to localStorage:', payload);
+    }
+  }, [editingState, title, subtitle, description, buttonText, storageKey]);
+
+  // ----------------- Selection Helpers -----------------
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      savedSelectionRef.current = sel.getRangeAt(0);
+    }
+  };
+
+  // ----------------- Close Timer Helpers -----------------
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const startCloseTimer = () => {
+    if (!closeTimerRef.current) {
+      closeTimerRef.current = setTimeout(() => {
+        setShowMenu(false);
+        setShowLinkInput(false);
+        closeTimerRef.current = null; // cleanup
+      }, 300); // 300ms
+    }
+  };
+
+  // Because we want to make sure if we open the menu again, we reset the timer
+  const openMenu = (x, y) => {
+    clearCloseTimer();
+    setMenuPosition({ x, y });
+    setShowMenu(true);
+  };
+
+  const openLinkInput = (isEditing, defaultValue = '') => {
+    clearCloseTimer();
+    setIsEditingLink(isEditing);
+    setLinkInputValue(defaultValue);
+    setShowLinkInput(true);
+  };
+
+  // ----------------- Right-Click Menu -----------------
+  const handleRightClick = (e) => {
+    e.preventDefault();
+    setShowLinkInput(false);
+
+    const { clientX, clientY } = e;
+    const viewportWidth = window.innerWidth;
+    const containerHeight = 522;
+
+    const menuWidth = 220;
+    const menuHeight = 300;
+
+    let newX = clientX;
+    let newY = clientY;
+
+    // Flip left if not enough space on right
+    if (clientX + menuWidth > viewportWidth) {
+      newX = clientX - menuWidth;
+      if (newX < 0) {
+        newX = 0;
+      }
+    }
+
+    // Flip above if not enough space below
+    if (clientY + menuHeight > containerHeight) {
+      newY = clientY - menuHeight;
+      if (newY < 0) {
+        newY = 0;
+      }
+    }
+
+    saveSelection();
+    openMenu(newX, newY);
+  };
+
+  // Submenu positioning (we still do this for flipping to the left/above)
+  const handleSubMenuHover = () => {
+    if (!subMenuRef.current) return;
+
+    const viewportWidth = window.innerWidth;
+    const containerHeight = 522;
+    const submenuWidth = subMenuRef.current.offsetWidth || 160;
+    const submenuHeight = subMenuRef.current.offsetHeight || 120;
+
+    let x = 220;
+    let y = 0;
+
+    // Flip left if not enough space on right
+    if (menuPosition.x + x + submenuWidth > viewportWidth) {
+      x = -submenuWidth;
+      if (menuPosition.x + x < 0) {
+        x = -menuPosition.x;
+      }
+    }
+
+    // Flip above if not enough space below
+    if (menuPosition.y + y + submenuHeight > containerHeight) {
+      y = -(submenuHeight - 10);
+      if (menuPosition.y + y < 0) {
+        y = -menuPosition.y + 10;
+      }
+    }
+
+    setSubMenuPosition({ x, y });
+  };
+
+  // ----------------- Link Editing -----------------
+  const handleAddLinkClick = () => {
+    openLinkInput(false, '');
+  };
+
+  const handleEditLinkClick = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount < 1) return;
+
+    const range = sel.getRangeAt(0);
+    let linkNode = range.commonAncestorContainer;
+    if (linkNode.nodeType === Node.TEXT_NODE) {
+      linkNode = linkNode.parentNode;
+    }
+    while (linkNode && linkNode.nodeName !== 'A') {
+      linkNode = linkNode.parentNode;
+    }
+
+    let linkHref = '';
+    if (linkNode && linkNode.nodeName === 'A') {
+      linkHref = linkNode.getAttribute('href') || '';
+    }
+
+    openLinkInput(true, linkHref);
+  };
+
+  /**
+   * --------------- THE ONLY CHANGE: we prepend "https://" if missing ---------------
+   */
+  const applyLink = () => {
+    if (isEditingLink) {
+      execCommand('unlink', savedSelectionRef);
+    }
+
+    let linkValue = linkInputValue.trim();
+    // If no protocol, prepend "https://"
+    if (
+      linkValue &&
+      !linkValue.includes('://') &&
+      !linkValue.startsWith('#') &&
+      !linkValue.startsWith('mailto:')
+    ) {
+      linkValue = 'https://' + linkValue;
+    }
+
+    if (linkValue) {
+      execCommand('createLink', savedSelectionRef, linkValue);
+      execCommand('underline', savedSelectionRef);
+    }
+
+    setShowLinkInput(false);
+    setShowMenu(false);
+  };
+
+  const removeLink = () => {
+    execCommand('unlink', savedSelectionRef);
+    setShowMenu(false);
+  };
+
+  // ----------------- Formatting Logic -----------------
+  const applyFormatting = (command) => {
+    execCommand(command, savedSelectionRef);
+    setShowMenu(false);
+  };
+
+  const removeFormatting = () => {
+    execCommand('removeFormat', savedSelectionRef);
+    setShowMenu(false);
+  };
+
+  const copyText = () => {
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const text = selection.toString();
+      navigator.clipboard.writeText(text).then(() => alert('Text copied!'));
+    }
+    setShowMenu(false);
+  };
+
+  const pasteAsPlainText = async () => {
+    const text = await navigator.clipboard.readText();
+    if (!text) return;
+    const sel = window.getSelection();
+    if (savedSelectionRef.current && sel) {
+      sel.removeAllRanges();
+      sel.addRange(savedSelectionRef.current);
+
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+    }
+    setShowMenu(false);
+  };
+
+  // ----------------- Mouse Enter/Leave for Main Menu + Popup -----------------
+  const handleMenuMouseEnter = () => {
+    setIsHoveringMenu(true);
+    clearCloseTimer();
+  };
+
+  const handleMenuMouseLeave = () => {
+    setIsHoveringMenu(false);
+    if (!isHoveringPopup) {
+      startCloseTimer();
+    }
+  };
+
+  const handlePopupMouseEnter = () => {
+    setIsHoveringPopup(true);
+    clearCloseTimer();
+  };
+
+  const handlePopupMouseLeave = () => {
+    setIsHoveringPopup(false);
+    if (!isHoveringMenu) {
+      startCloseTimer();
+    }
+  };
+
+  // ----------------- Click Outside to Close Immediately -----------------
+  const handleClickOutside = (event) => {
+    const clickedInsideEditable = Object.values(editableRefs).some((ref) =>
+      ref.current?.contains(event.target)
+    );
+
+    const menuEl = document.getElementById('custom-context-menu');
+    const linkInputEl = document.getElementById('custom-link-input');
+
+    if (
+      (menuEl && menuEl.contains(event.target)) ||
+      (linkInputEl && linkInputEl.contains(event.target))
+    ) {
+      return;
+    }
+
+    if (!clickedInsideEditable) {
+      setShowMenu(false);
+      setShowLinkInput(false);
+      clearCloseTimer();
+    }
+  };
+
+  useEffect(() => {
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  // --- The logic that positions the link popup within the viewport ---
+  const computeLinkPopupPosition = () => {
+    const xBase = menuPosition.x;
+    const yBase = menuPosition.y;
+
+    let finalLeft = xBase + 230;
+    let finalTop = yBase + 10;
+
+    const popupWidth = 240;
+    const popupHeight = 130;
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    if (finalLeft + popupWidth > viewportWidth) {
+      finalLeft = xBase - popupWidth;
+      if (finalLeft < 0) finalLeft = 0;
+    }
+    if (finalTop + popupHeight > viewportHeight) {
+      finalTop = yBase - popupHeight;
+      if (finalTop < 0) finalTop = 0;
+    }
+    return { top: finalTop, left: finalLeft };
+  };
+
+  const { top: linkInputTop, left: linkInputLeft } = computeLinkPopupPosition();
+
+  return (
+    <>
+      {/* Show green dashed outline on focused contentEditable */}
+      <style>
+        {`
+          [contentEditable="true"]:focus {
+            outline: 3px dashed #00ff00;
+            outline-offset: 6px;
+          }
+          /* Ensure normal cursor by default */
+          .hero-container {
+            cursor: auto;
+          }
+          /* Show pointer on actual links only: */
+          .hero-container a[href] {
+            cursor: pointer;
+          }
+        `}
+      </style>
+
+      <Box
+        className={`
+          ${className}
+          hero-container
+          relative w-full min-h-[500px] md:min-h-[522px]
+          overflow-hidden py-[80px] md:py-[80px] flex items-center
+          ${STYLES === 'Fixed' ? 'fixed' : 'relative'}
+        `}
+        style={{
+          zIndex: STYLES === 'Fixed' ? -10 : 'auto',
+        }}
+      >
+        {/* Video layer */}
+        {videoUrl ? (
+          <video
+            className={`
+              top-0 left-0 w-full h-full object-cover
+              ${STYLES === 'Fixed' ? 'fixed' : 'absolute'}
+            `}
+            style={{
+              pointerEvents: 'none',
+              zIndex: STYLES === 'Fixed' ? -10 : 'auto',
+            }}
+            src={videoUrl}
+            autoPlay
+            loop
+            playsInline
+            muted
+          />
+        ) : (
+          <div
+            className={`
+              top-0 left-0 w-full h-full bg-gray-800
+              ${STYLES === 'Fixed' ? 'fixed' : 'absolute'}
+            `}
+            style={{
+              pointerEvents: 'none',
+              zIndex: STYLES === 'Fixed' ? -10 : 'auto',
+            }}
+          />
+        )}
+
+        {/* Overlay */}
+        <div
+          className="absolute top-0 left-0 w-full h-full bg-black bg-opacity-10"
+          style={{ zIndex: 'auto', pointerEvents: 'none' }}
+        />
+
+        {/* Content */}
+        <div
+          className="relative z-10 flex flex-col items-center justify-center h-full text-center max-w-[1140px] mx-auto"
+          style={{ color: textColor }}
+        >
+          {/* Title */}
+          {editingState ? (
+            <h2
+              ref={editableRefs.title}
+              contentEditable
+              suppressContentEditableWarning
+              className="text-base md:text-xl font-light tracking-wide mb-4 md:mb-8 lg:mb-10"
+              onBlur={() => {
+                setTitle(editableRefs.title.current.innerHTML);
+              }}
+              onContextMenu={handleRightClick}
+              dangerouslySetInnerHTML={{ __html: title }}
+            />
+          ) : (
+            <h2
+              className="text-base md:text-xl font-light tracking-wide mb-4 md:mb-8 lg:mb-10"
+              dangerouslySetInnerHTML={{ __html: title }}
+            />
+          )}
+
+          {/* Subtitle */}
+          {editingState ? (
+            <h1
+              ref={editableRefs.subtitle}
+              contentEditable
+              suppressContentEditableWarning
+              className="text-6xl md:text-8xl lg:text-9xl mb-6 md:mb-8 lg:mb-8"
+              onBlur={() => {
+                setSubtitle(editableRefs.subtitle.current.innerHTML);
+              }}
+              onContextMenu={handleRightClick}
+              style={{
+                fontFamily: family ? `${family}, sans-serif` : undefined,
+                fontStyle,
+                fontWeight,
+              }}
+              dangerouslySetInnerHTML={{ __html: subtitle }}
+            />
+          ) : (
+            <h1
+              className="text-6xl md:text-8xl lg:text-9xl mb-6 md:mb-8 lg:mb-8"
+              style={{
+                fontFamily: family ? `${family}, sans-serif` : undefined,
+                fontStyle,
+                fontWeight,
+              }}
+              dangerouslySetInnerHTML={{ __html: subtitle }}
+            />
+          )}
+
+          {/* Description */}
+          {editingState ? (
+            <div
+              ref={editableRefs.description}
+              contentEditable
+              suppressContentEditableWarning
+              className="text-base md:text-base lg:text-lg mb-5 md:mb-10 px-4 md:px-4"
+              onBlur={() => {
+                setDescription(editableRefs.description.current.innerHTML);
+              }}
+              onContextMenu={handleRightClick}
+              dangerouslySetInnerHTML={{ __html: description }}
+            />
+          ) : (
+            <div
+              className="text-base md:text-base lg:text-lg mb-5 md:mb-10 px-4 md:px-4"
+              dangerouslySetInnerHTML={{ __html: description }}
+            />
+          )}
+
+          {/* Button */}
+          <a
+            href={editingState ? undefined : buttonLink}
+            target={editingState ? undefined : '_blank'}
+            rel={editingState ? undefined : 'noopener noreferrer'}
+          >
+            <button
+              className="font-bold py-2 px-4 md:px-6 rounded hover:bg-gray-200 transition duration-300 text-sm md:text-base"
+              style={{
+                backgroundColor: buttonBackgroundColor,
+                color: buttonTextColor,
+              }}
+              disabled={editingState}
+            >
+              {editingState ? (
+                <span
+                  ref={editableRefs.buttonText}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onBlur={() => {
+                    setButtonText(editableRefs.buttonText.current.innerHTML);
+                  }}
+                  onContextMenu={handleRightClick}
+                  dangerouslySetInnerHTML={{ __html: buttonText }}
+                  style={{ outline: 'none', border: 'none', display: 'inline-block' }}
+                />
+              ) : (
+                <span
+                  dangerouslySetInnerHTML={{ __html: buttonText }}
+                  style={{ display: 'inline-block' }}
+                />
+              )}
+            </button>
+          </a>
+        </div>
+      </Box>
+
+      {/* ---------- Right-Click Menu ---------- */}
+      {showMenu && (
+        <div
+          id="custom-context-menu"
+          className="absolute bg-white border border-gray-300 rounded shadow-lg"
+          style={{
+            top: menuPosition.y,
+            left: menuPosition.x,
+            zIndex: 50,
+            width: '220px',
+          }}
+          onMouseEnter={() => {
+            setIsHoveringMenu(true);
+            clearCloseTimer();
+          }}
+          onMouseLeave={() => {
+            setIsHoveringMenu(false);
+            if (!isHoveringPopup) {
+              startCloseTimer();
+            }
+          }}
+        >
+          <div className="relative group">
+            <button
+              className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left flex justify-between"
+              onMouseEnter={handleSubMenuHover}
+            >
+              Font Style <span className="ml-auto">&raquo;</span>
+            </button>
+            <div
+              ref={subMenuRef}
+              className="absolute hidden group-hover:block bg-white border border-gray-300 rounded shadow-lg w-40 z-50"
+              style={{
+                top: subMenuPosition.y,
+                left: subMenuPosition.x,
+              }}
+            >
+              <button
+                className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+                onClick={() => applyFormatting('bold')}
+              >
+                Bold
+              </button>
+              <button
+                className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+                onClick={() => applyFormatting('italic')}
+              >
+                Italic
+              </button>
+              <button
+                className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+                onClick={() => applyFormatting('underline')}
+              >
+                Underline
+              </button>
+            </div>
+          </div>
+
+          <hr className="my-1" />
+          <button
+            className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+            onClick={removeFormatting}
+          >
+            Remove Formatting
+          </button>
+
+          <hr className="my-1" />
+          <button
+            className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+            onClick={handleAddLinkClick}
+          >
+            Add Link
+          </button>
+          <button
+            className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+            onClick={handleEditLinkClick}
+          >
+            Edit Link
+          </button>
+          <button
+            className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+            onClick={removeLink}
+          >
+            Remove Link
+          </button>
+
+          <hr className="my-1" />
+          <button
+            className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+            onClick={copyText}
+          >
+            Copy
+          </button>
+          <button
+            className="block w-full px-4 py-2 text-sm text-black hover:bg-gray-200 text-left"
+            onClick={pasteAsPlainText}
+          >
+            Paste as Plain Text
+          </button>
+        </div>
+      )}
+
+      {/* ---------- Custom Link Input Popup ---------- */}
+      {showLinkInput && (
+        <div
+          id="custom-link-input"
+          className="absolute bg-white border border-gray-300 rounded shadow-lg p-3"
+          style={{
+            top: linkInputTop,
+            left: linkInputLeft,
+            zIndex: 60,
+            width: '240px',
+          }}
+          onMouseEnter={() => {
+            setIsHoveringPopup(true);
+            clearCloseTimer();
+          }}
+          onMouseLeave={() => {
+            setIsHoveringPopup(false);
+            if (!isHoveringMenu) {
+              startCloseTimer();
+            }
+          }}
+        >
+          <label className="block text-sm font-semibold mb-2">Enter Link URL:</label>
+          <input
+            type="text"
+            className="w-full border px-2 py-1 mb-2"
+            value={linkInputValue}
+            onChange={(e) => setLinkInputValue(e.target.value)}
+          />
+          <div className="flex space-x-2">
+            <button
+              className="bg-blue-500 text-white px-3 py-1 rounded text-sm"
+              onClick={applyLink}
+            >
+              {isEditingLink ? 'Update Link' : 'Add Link'}
+            </button>
+            <button
+              className="bg-gray-300 px-3 py-1 rounded text-sm"
+              onClick={() => setShowLinkInput(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
